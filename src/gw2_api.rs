@@ -8,7 +8,17 @@ pub mod listings {
     use std::fmt::Write;
 
     use super::build_url;
-    use crate::client::Client;
+    use crate::client::{self, Client};
+
+    #[derive(thiserror::Error, Debug)]
+    pub enum GetManyListings {
+        #[error("max of 200 ids are allowed, got {0}")]
+        TooManyListingIds(u32),
+        #[error("client error: {0}")]
+        ClientError(#[from] client::GetError),
+    }
+
+    // pub type Result<T> = client::Result<
 
     #[derive(serde::Deserialize, Debug)]
     pub struct ListingId(pub u32);
@@ -37,11 +47,14 @@ pub mod listings {
         pub sells: Vec<ListingItem>,
     }
 
-    pub async fn get_all(client: &Client) -> eyre::Result<Vec<ListingId>> {
-        client.get(&build_url("/v2/commerce/listings")).await
+    pub async fn get_all(client: &Client) -> Result<Vec<ListingId>, client::GetError> {
+        Ok(client.get(&build_url("/v2/commerce/listings")).await?)
     }
 
-    pub async fn get_listing(client: &Client, id: &ListingId) -> eyre::Result<Listings> {
+    pub async fn get_listing(
+        client: &Client,
+        id: &ListingId,
+    ) -> Result<Listings, client::GetError> {
         client
             .get(&build_url(&format!("/v2/commerce/listings/{}", id)))
             .await
@@ -50,12 +63,11 @@ pub mod listings {
     pub async fn get_many_listings(
         client: &Client,
         ids: &[ListingId],
-    ) -> eyre::Result<Vec<Listings>> {
-        eyre::ensure!(
-            ids.len() <= 200,
-            "max of 200 ids are allowed, got {}",
-            ids.len()
-        );
+    ) -> Result<Vec<Listings>, GetManyListings> {
+        if ids.len() > 200 {
+            return Err(GetManyListings::TooManyListingIds(ids.len() as u32));
+        }
+
         let param = ids.iter().fold(String::new(), |mut acc, id| {
             if acc.is_empty() {
                 id.to_string()
@@ -64,8 +76,9 @@ pub mod listings {
                 acc
             }
         });
-        client
+
+        Ok(client
             .get(&build_url(&format!("/v2/commerce/listings?ids={}", param)))
-            .await
+            .await?)
     }
 }

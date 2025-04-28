@@ -4,6 +4,18 @@ pub struct Client {
     inner: reqwest::Client,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum GetError {
+    #[error("HTTP error: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("Request failed with status {status}, url: {url}, body: {body}")]
+    RequestFailedWithBody {
+        status: reqwest::StatusCode,
+        url: String,
+        body: String,
+    },
+}
+
 impl Client {
     pub fn new() -> eyre::Result<Self> {
         let mut headers = HeaderMap::new();
@@ -15,21 +27,22 @@ impl Client {
         })
     }
 
-    pub async fn get<Response>(&self, url: &str) -> eyre::Result<Response>
+    pub async fn get<Response>(&self, url: &str) -> Result<Response, GetError>
     where
         Response: serde::de::DeserializeOwned,
     {
         let response = self.inner.get(url).send().await?;
 
         let status = response.status();
+
         if !status.is_success() {
+            // TODO: Parse error message from response body.
             let body = response.text().await?;
-            return Err(eyre::eyre!(
-                "Request failed with status {}, url: {}, body: {}",
+            return Err(GetError::RequestFailedWithBody {
                 status,
-                url,
-                body
-            ));
+                body,
+                url: url.to_string(),
+            });
         }
 
         Ok(response.json().await?)
