@@ -1,7 +1,12 @@
+use std::borrow::Cow;
+
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 
+// TODO: Rate limiter
 pub struct Client {
     inner: reqwest::Client,
+    #[allow(unused)]
+    token: Option<Cow<'static, str>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -17,13 +22,22 @@ pub enum GetError {
 }
 
 impl Client {
-    pub fn new() -> eyre::Result<Self> {
+    pub fn new(token: Option<Cow<'static, str>>) -> eyre::Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static("gw2-gold-digger"));
+
+        if let Some(token) = &token {
+            headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&format!("Bearer {}", token))?,
+            );
+        }
+
         Ok(Self {
             inner: reqwest::ClientBuilder::new()
                 .default_headers(headers)
                 .build()?,
+            token,
         })
     }
 
