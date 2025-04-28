@@ -59,6 +59,7 @@ pub struct Client {
     inner: reqwest::Client,
     #[allow(unused)]
     token: Option<Cow<'static, str>>,
+    rate_limiter: rate_limiter::RateLimiter,
 }
 
 impl fmt::Debug for Client {
@@ -94,7 +95,11 @@ impl Client {
             .default_headers(headers)
             .build()?;
 
-        Ok(Self { inner, token })
+        Ok(Self {
+            inner,
+            token,
+            rate_limiter: rate_limiter::RateLimiter::new(300, 5.0),
+        })
     }
 
     /// Performs a standard GET request without pagination.
@@ -114,6 +119,8 @@ impl Client {
     where
         Response: DeserializeOwned,
     {
+        self.rate_limiter.acquire(1).await;
+
         let response = self.inner.get(url).send().await?; // Propagates reqwest::Error via #[from]
 
         let status = response.status();
@@ -157,6 +164,8 @@ impl Client {
     where
         Response: DeserializeOwned,
     {
+        self.rate_limiter.acquire(1).await;
+
         let paginated_url = if base_url.contains('?') {
             format!("{}&{}", base_url, params.to_query_string())
         } else {
@@ -355,4 +364,240 @@ pub struct Paginated<T> {
     pub data: T,
     /// Pagination metadata extracted from response headers.
     pub metadata: PaginationMetadata,
+}
+
+pub mod rate_limiter {
+    use std::cell::Cell;
+    use std::time::{Duration, Instant};
+    use tracing::instrument;
+
+    /// A lazy token bucket rate limiter for async Rust code.
+    /// Not thread-safe - designed for use in a single task.
+    pub struct RateLimiter {
+        /// Maximum capacity of tokens
+        capacity: u32,
+        /// Rate at which tokens refill (tokens per second)
+        refill_rate: f64,
+        /// Available tokens (lazily calculated when needed)
+        available_tokens: Cell<f64>,
+        /// Last time tokens were calculated
+        last_update: Cell<Instant>,
+    }
+
+    impl RateLimiter {
+        /// Create a new rate limiter with the given capacity and refill rate
+        pub fn new(capacity: u32, tokens_per_second: f64) -> Self {
+            tracing::info!(capacity, tokens_per_second, "Creating new AsyncRateLimiter");
+            RateLimiter {
+                capacity,
+                refill_rate: tokens_per_second,
+                available_tokens: Cell::new(0.),
+                last_update: Cell::new(Instant::now()),
+            }
+        }
+
+        /// Calculate current token count based on elapsed time
+        fn calculate_current_tokens(&self) {
+            let now = Instant::now();
+            let last = self.last_update.get();
+            let elapsed = now.duration_since(last).as_secs_f64();
+
+            if elapsed > 0.0 {
+                // Calculate new tokens based on elapsed time
+                let new_tokens = self.refill_rate * elapsed;
+                let current = self.available_tokens.get();
+
+                // Update available tokens (capped at capacity)
+                let updated = (current + new_tokens).min(self.capacity as f64);
+
+                tracing::trace!(
+                    elapsed_secs = elapsed,
+                    new_tokens,
+                    before = current,
+                    after = updated,
+                    "Refreshed token bucket"
+                );
+
+                self.available_tokens.set(updated);
+                self.last_update.set(now);
+            }
+        }
+
+        /// Try to acquire tokens immediately without waiting
+        /// Returns true if successful, false if not enough tokens
+        #[instrument(skip(self), fields(capacity = self.capacity, available = self.available()))]
+        pub fn try_acquire(&self, tokens: u32) -> bool {
+            self.calculate_current_tokens();
+
+            let available = self.available_tokens.get();
+            if available < tokens as f64 {
+                tracing::info!(requested = tokens, available, "Rate limit exceeded");
+                return false;
+            }
+
+            self.available_tokens.set(available - tokens as f64);
+            tracing::trace!(
+                tokens,
+                remaining = self.available_tokens.get(),
+                "Tokens acquired"
+            );
+            true
+        }
+
+        /// Acquire specified number of tokens, waiting if necessary
+        pub async fn acquire(&self, tokens: u32) {
+            self.calculate_current_tokens();
+
+            let available = self.available_tokens.get();
+            if available >= tokens as f64 {
+                // We have enough tokens available
+                self.available_tokens.set(available - tokens as f64);
+                tracing::trace!(tokens, "Tokens acquired immediately");
+                return;
+            }
+
+            // Calculate tokens needed and wait time
+            let tokens_needed = tokens as f64 - available;
+            let wait_time = Duration::from_secs_f64(tokens_needed / self.refill_rate);
+
+            tracing::trace!(
+                tokens,
+                tokens_needed,
+                wait_time_ms = wait_time.as_millis(),
+                "Waiting for token refill"
+            );
+
+            // Use all currently available tokens
+            self.available_tokens.set(0.0);
+
+            // Wait for remaining tokens to become available
+            tokio::time::sleep(wait_time).await;
+
+            // Update time after waiting
+            self.last_update.set(Instant::now());
+            tracing::trace!(tokens, "Tokens acquired after waiting");
+        }
+
+        /// Acquire tokens with a timeout
+        /// Returns true if tokens were acquired, false if timeout reached
+        pub async fn acquire_with_timeout(&self, tokens: u32, timeout: Duration) -> bool {
+            self.calculate_current_tokens();
+
+            let available = self.available_tokens.get();
+            if available >= tokens as f64 {
+                // We have enough tokens available
+                self.available_tokens.set(available - tokens as f64);
+                tracing::trace!(tokens, "Tokens acquired immediately with timeout");
+                return true;
+            }
+
+            // Calculate how long we'd need to wait
+            let tokens_needed = tokens as f64 - available;
+            let required_wait = Duration::from_secs_f64(tokens_needed / self.refill_rate);
+
+            if required_wait > timeout {
+                tracing::trace!(
+                    required_wait_ms = required_wait.as_millis(),
+                    timeout_ms = timeout.as_millis(),
+                    "Timeout too short for required wait"
+                );
+                return false; // Would exceed timeout
+            }
+
+            // Use all available tokens and wait
+            self.available_tokens.set(0.0);
+
+            tracing::trace!(
+                tokens,
+                wait_time_ms = required_wait.as_millis(),
+                "Waiting for token refill with timeout"
+            );
+
+            tokio::time::sleep(required_wait).await;
+            self.last_update.set(Instant::now());
+            tracing::trace!(tokens, "Tokens acquired after waiting with timeout");
+
+            true
+        }
+
+        /// Get current available tokens (for debugging/testing)
+        pub fn available(&self) -> f64 {
+            self.calculate_current_tokens();
+            self.available_tokens.get()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use tokio::time::{sleep, Duration, Instant};
+
+        fn assert_float_eq(a: f64, b: f64, epsilon: f64) {
+            assert!((a - b).abs() < epsilon, "Values are not equal");
+        }
+
+        #[tokio::test]
+        async fn test_try_acquire_success() {
+            let limiter = RateLimiter::new(5, 1.0);
+            assert!(limiter.try_acquire(3));
+            assert_float_eq(limiter.available(), 2.0, 0.01);
+        }
+
+        #[tokio::test]
+        async fn test_try_acquire_failure() {
+            let limiter = RateLimiter::new(5, 1.0);
+            assert!(!limiter.try_acquire(6));
+            assert_float_eq(limiter.available(), 5.0, 0.01);
+        }
+
+        #[tokio::test]
+        async fn test_acquire_immediate() {
+            let limiter = RateLimiter::new(5, 1.0);
+            limiter.acquire(3).await;
+            assert_float_eq(limiter.available(), 2.0, 0.01);
+        }
+
+        #[tokio::test]
+        async fn test_acquire_wait() {
+            let limiter = RateLimiter::new(5, 1.0);
+            limiter.try_acquire(5);
+            let start = Instant::now();
+            limiter.acquire(1).await;
+            let elapsed = start.elapsed();
+            assert!(elapsed >= Duration::from_secs(1));
+            assert_float_eq(limiter.available(), 0.0, 0.01);
+        }
+
+        #[tokio::test]
+        async fn test_acquire_with_timeout_success() {
+            let limiter = RateLimiter::new(5, 1.0);
+            limiter.try_acquire(5);
+            let result = limiter
+                .acquire_with_timeout(1, Duration::from_secs(2))
+                .await;
+            assert!(result);
+            assert_float_eq(limiter.available(), 0.0, 0.01);
+        }
+
+        #[tokio::test]
+        async fn test_acquire_with_timeout_failure() {
+            let limiter = RateLimiter::new(5, 1.0);
+            limiter.try_acquire(5);
+            let result = limiter
+                .acquire_with_timeout(2, Duration::from_secs(1))
+                .await;
+            assert!(!result);
+            assert_float_eq(limiter.available(), 0.0, 0.01);
+        }
+
+        #[tokio::test]
+        async fn test_available_tokens_refill() {
+            let limiter = RateLimiter::new(5, 1.0);
+            limiter.try_acquire(5);
+            assert_float_eq(limiter.available(), 0.0, 0.01);
+            sleep(Duration::from_secs(3)).await;
+            let available = limiter.available();
+            assert_float_eq(available, 3.0, 0.01);
+        }
+    }
 }

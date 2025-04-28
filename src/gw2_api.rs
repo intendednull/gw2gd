@@ -55,8 +55,16 @@ pub mod listings {
 
     /// Fetches all item IDs that have listings on the trading post.
     /// Corresponds to GET /v2/commerce/listings
-    pub async fn get_all(client: &Client) -> Result<Vec<ItemId>, client::GetError> {
+    pub async fn get_all_ids(client: &Client) -> Result<Vec<ItemId>, client::GetError> {
         Ok(client.get(&build_url("/v2/commerce/listings")).await?)
+    }
+
+    /// Fetches all items that have listings on the trading post.
+    /// Corresponds to paginated GET /v2/commerce/listings
+    pub async fn get_all(client: &Client) -> Result<Vec<Listings>, client::PaginatedGetError> {
+        Ok(client
+            .get_all_pages(&build_url("/v2/commerce/listings"), Default::default())
+            .await?)
     }
 
     /// Fetches the buy and sell listings for a single item ID.
@@ -142,8 +150,15 @@ pub mod prices {
 
     /// Fetches all item IDs that have price information on the trading post.
     /// Corresponds to GET /v2/commerce/prices
-    pub async fn get_all(client: &Client) -> Result<Vec<ItemId>, client::GetError> {
+    pub async fn get_all_ids(client: &Client) -> Result<Vec<ItemId>, client::GetError> {
         Ok(client.get(&build_url("/v2/commerce/prices")).await?)
+    }
+
+    /// Fetches all items that have price information on the trading post.
+    pub async fn get_all(client: &Client) -> Result<Vec<Price>, client::PaginatedGetError> {
+        Ok(client
+            .get_all_pages(&build_url("/v2/commerce/prices"), Default::default())
+            .await?)
     }
 
     /// Fetches the aggregated price information for a single item ID.
