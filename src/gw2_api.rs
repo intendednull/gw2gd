@@ -191,14 +191,7 @@ pub mod prices {
 /// Note: These endpoints are paginated by the API. These functions currently fetch only the first page.
 /// See: https://wiki.guildwars2.com/wiki/API:2/commerce/transactions
 pub mod transactions {
-    use super::{build_url, client, Client, ItemId}; // Use ItemId from parent scope
-
-    // Note: All functions in this module require an API key with 'account' and 'tradingpost' permissions.
-    // The client instance is expected to be configured with a valid API key.
-
-    // Note: These endpoints are paginated by the API. These functions currently fetch only the first page (default 200 results).
-    // Proper pagination handling (e.g., using page/page_size parameters and handling response headers like X-Page-Total)
-    // would require modifications to the client::get method or additional helper functions.
+    use super::{build_url, client, Client, ItemId};
 
     #[derive(serde::Deserialize, Debug)]
     pub struct Transaction {
@@ -223,10 +216,14 @@ pub mod transactions {
     /// Corresponds to GET /v2/commerce/transactions/current/buys
     /// Requires authentication: 'account', 'tradingpost' scopes.
     /// Returns the first page of results.
-    pub async fn get_current_buys(client: &Client) -> Result<Vec<Transaction>, client::GetError> {
-        // TODO: Add pagination support (page, page_size query parameters)
+    pub async fn get_current_buys(
+        client: &Client,
+    ) -> Result<Vec<Transaction>, client::PaginatedGetError> {
         client
-            .get(&build_url("/v2/commerce/transactions/current/buys"))
+            .get_all_pages(
+                &build_url("/v2/commerce/transactions/current/buys"),
+                Default::default(),
+            )
             .await
     }
 
@@ -234,10 +231,14 @@ pub mod transactions {
     /// Corresponds to GET /v2/commerce/transactions/current/sells
     /// Requires authentication: 'account', 'tradingpost' scopes.
     /// Returns the first page of results.
-    pub async fn get_current_sells(client: &Client) -> Result<Vec<Transaction>, client::GetError> {
-        // TODO: Add pagination support (page, page_size query parameters)
+    pub async fn get_current_sells(
+        client: &Client,
+    ) -> Result<Vec<Transaction>, client::PaginatedGetError> {
         client
-            .get(&build_url("/v2/commerce/transactions/current/sells"))
+            .get_all_pages(
+                &build_url("/v2/commerce/transactions/current/sells"),
+                Default::default(),
+            )
             .await
     }
 
@@ -245,10 +246,14 @@ pub mod transactions {
     /// Corresponds to GET /v2/commerce/transactions/history/buys
     /// Requires authentication: 'account', 'tradingpost' scopes.
     /// Returns the first page of results.
-    pub async fn get_history_buys(client: &Client) -> Result<Vec<Transaction>, client::GetError> {
-        // TODO: Add pagination support (page, page_size query parameters)
+    pub async fn get_history_buys(
+        client: &Client,
+    ) -> Result<Vec<Transaction>, client::PaginatedGetError> {
         client
-            .get(&build_url("/v2/commerce/transactions/history/buys"))
+            .get_all_pages(
+                &build_url("/v2/commerce/transactions/history/buys"),
+                Default::default(),
+            )
             .await
     }
 
@@ -256,10 +261,14 @@ pub mod transactions {
     /// Corresponds to GET /v2/commerce/transactions/history/sells
     /// Requires authentication: 'account', 'tradingpost' scopes.
     /// Returns the first page of results.
-    pub async fn get_history_sells(client: &Client) -> Result<Vec<Transaction>, client::GetError> {
-        // TODO: Add pagination support (page, page_size query parameters)
+    pub async fn get_history_sells(
+        client: &Client,
+    ) -> Result<Vec<Transaction>, client::PaginatedGetError> {
         client
-            .get(&build_url("/v2/commerce/transactions/history/sells"))
+            .get_all_pages(
+                &build_url("/v2/commerce/transactions/history/sells"),
+                Default::default(),
+            )
             .await
     }
 }
