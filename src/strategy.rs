@@ -18,8 +18,8 @@ pub struct Market {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Level {
-    pub price: Decimal,
-    pub size: Decimal,
+    pub price: Price,
+    pub size: Size,
 }
 
 pub struct Orderbook {
@@ -49,11 +49,11 @@ impl Orderbook {
 }
 
 /// Determines profit from spread
-pub fn calc_naive_profit(ob: &Orderbook) -> Option<Decimal> {
+pub fn calc_profit_from_spread(ob: &Orderbook) -> Option<Profit> {
     let best_ask = ob.asks().next()?;
     let best_bid = ob.bids().next()?;
     let gross_profit = best_ask.price - best_bid.price;
-    Some(gross_profit * (Decimal::ONE - SELL_FEE))
+    Some(gross_profit - (best_ask.price * SELL_FEE))
 }
 
 pub struct ProfitResult<'a> {
@@ -78,7 +78,7 @@ where
         inner: obs
             .into_iter()
             .filter_map(|market| {
-                let profit = calc_naive_profit(&market.orderbook)?;
+                let profit = calc_profit_from_spread(&market.orderbook)?;
                 Some((profit, market))
             })
             .collect(),
@@ -114,8 +114,8 @@ mod tests {
             ],
         );
 
-        let profit = calc_naive_profit(&ob).unwrap();
-        assert_eq!(profit, dec!(1) * (Decimal::ONE - SELL_FEE));
+        let profit = calc_profit_from_spread(&ob).unwrap();
+        assert_eq!(profit, dec!(1) - (dec!(3) * SELL_FEE));
     }
 
     #[test]
@@ -163,7 +163,7 @@ mod tests {
         ];
         let result = find_profit(&obs);
         let best = result.best().unwrap();
-        assert_eq!(*best.0, dec!(3) * (Decimal::ONE - SELL_FEE));
+        assert_eq!(*best.0, dec!(3) - (dec!(5) * SELL_FEE));
         assert_eq!(result.iter().count(), 3);
     }
 }
