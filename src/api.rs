@@ -21,12 +21,12 @@ impl std::fmt::Display for ItemId {
 pub mod listings {
     use std::fmt::Write;
 
-    use super::*; // Use ListingId from parent scope
+    use super::*;
 
     #[derive(thiserror::Error, Debug)]
     pub enum GetManyListingsError {
         #[error("max of 200 ids are allowed, got {0}")]
-        TooManyListingIds(usize), // Use usize for len()
+        TooManyListingIds(usize),
         #[error("client error: {0}")]
         ClientError(#[from] client::GetError),
     }
@@ -46,7 +46,7 @@ pub mod listings {
     pub struct Listings {
         /// The item id these listings belong to. Note: The API calls this 'id' but it refers to the *Item ID*, not Listing ID.
         /// Corrected based on API docs - it's the Item ID. If you need the listing ID concept elsewhere, it's not in this response.
-        pub id: super::ItemId, // Changed to use the shared ItemId
+        pub id: ItemId,
         /// The buy order listings (players wanting to buy).
         pub buys: Vec<ListingItem>,
         /// The sell offer listings (players wanting to sell).
@@ -71,7 +71,7 @@ pub mod listings {
     /// Corresponds to GET /v2/commerce/listings/{item_id}
     pub async fn get_listing(
         client: &Client,
-        item_id: &super::ItemId, // Parameter should be ItemId
+        item_id: &ItemId,
     ) -> Result<Listings, client::GetError> {
         client
             .get(&build_url(&format!("/v2/commerce/listings/{}", item_id)))
@@ -83,23 +83,21 @@ pub mod listings {
     /// Note: The API limits the number of IDs per request to 200.
     pub async fn get_many_listings(
         client: &Client,
-        item_ids: &[super::ItemId], // Parameter should be ItemId slice
+        item_ids: &[ItemId],
     ) -> Result<Vec<Listings>, GetManyListingsError> {
         if item_ids.len() > 200 {
             return Err(GetManyListingsError::TooManyListingIds(item_ids.len()));
         }
 
         if item_ids.is_empty() {
-            return Ok(Vec::new()); // Return empty vec if no IDs provided
+            return Ok(Vec::new());
         }
 
-        // Build comma-separated string of IDs
         let param = item_ids.iter().fold(String::new(), |mut acc, id| {
             if !acc.is_empty() {
                 acc.push(',');
             }
 
-            // Use write! macro which returns a Result, handle potential formatting errors
             write!(&mut acc, "{}", id).expect("writing ItemId to String should not fail");
 
             acc
@@ -121,7 +119,7 @@ pub mod prices {
     #[derive(thiserror::Error, Debug)]
     pub enum GetManyPricesError {
         #[error("max of 200 ids are allowed, got {0}")]
-        TooManyItemIds(usize), // Use usize for len()
+        TooManyItemIds(usize),
         #[error("client error: {0}")]
         ClientError(#[from] client::GetError),
     }
