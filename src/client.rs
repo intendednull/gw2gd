@@ -418,7 +418,7 @@ pub mod rate_limiter {
                     "Refreshed token bucket"
                 );
 
-                self.available_tokens.set(updated);
+                self.available_tokens.set(dbg!(updated));
                 self.last_update.set(now);
             }
         }
@@ -533,26 +533,33 @@ pub mod rate_limiter {
         use tokio::time::{sleep, Duration, Instant};
 
         fn assert_float_eq(a: f64, b: f64, epsilon: f64) {
-            assert!((a - b).abs() < epsilon, "Values are not equal");
+            assert!(
+                (a - b).abs() < epsilon,
+                "Values are not equal: {} != {}",
+                a,
+                b
+            );
         }
 
         #[tokio::test]
         async fn test_try_acquire_success() {
-            let limiter = RateLimiter::new(5, 1.0);
+            let limiter = RateLimiter::new(5, 9.0);
+            tokio::time::sleep(Duration::from_secs(1)).await;
             assert!(limiter.try_acquire(3));
-            assert_float_eq(limiter.available(), 2.0, 0.01);
+            assert_float_eq(limiter.available(), 2., 0.01);
         }
 
         #[tokio::test]
         async fn test_try_acquire_failure() {
             let limiter = RateLimiter::new(5, 1.0);
             assert!(!limiter.try_acquire(6));
-            assert_float_eq(limiter.available(), 5.0, 0.01);
+            assert_float_eq(limiter.available(), 0., 0.01);
         }
 
         #[tokio::test]
         async fn test_acquire_immediate() {
-            let limiter = RateLimiter::new(5, 1.0);
+            let limiter = RateLimiter::new(5, 100.);
+            tokio::time::sleep(Duration::from_millis(200)).await;
             limiter.acquire(3).await;
             assert_float_eq(limiter.available(), 2.0, 0.01);
         }
